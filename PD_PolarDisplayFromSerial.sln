@@ -1,0 +1,27 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.31410.357
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "PD_PolarDisplayFromSerial", "PD_PolarDisplayFromSerial\PD_PolarDisplayFromSerial.pyproj", "{0AC78812-561E-45A3-8320-5E075C03352C}"
+EndProject
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "Test", "Test\Test.pyproj", "{83DA6A09-F347-4C78-9CAA-629041B301E4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0AC78812-561E-45A3-8320-5E075C03352C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0AC78812-561E-45A3-8320-5E075C03352C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{83DA6A09-F347-4C78-9CAA-629041B301E4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{83DA6A09-F347-4C78-9CAA-629041B301E4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {B37B6CE6-AF82-443F-8ED5-9EF3292E7A5E}
+	EndGlobalSection
+EndGlobal
