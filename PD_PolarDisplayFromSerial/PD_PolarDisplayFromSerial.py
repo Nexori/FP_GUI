@@ -19,37 +19,59 @@ class serialPolarPlot:
         self.s.baudrate = baudrate
         self.s.timeout = serialTimeout
         self.s.port = serialPort
-        self.currentLine=''
-        self.s.open()
         self.thread = None
 
-        while not (self.s.isOpen()):
-            print("[ERROR] Cannot open COM port. Is the device connected at", self.s.port, "with baud", self.s.baudrate,
-                  "? Is the port used elsewhere?")
-            sleep(1)
-            self.s.open()
-        print("[INFO] COM opened successfully.")
         self.cSpeed = "NaN"
         self.cStepSkip = "NaN"
         self.cTimeBudget = "NaN"
         self.lpTime = "NaN"
-        self.readSerialStart()
+
         self.root = tk.Tk()         # Main Tkinter window
-
         self.init_window()
-        self.root.mainloop()
 
-    def readSerialStart(self):
+        self.entry_serialTimeout.insert(tk.END,str(serialTimeout))
+        self.entry_serialBaud.insert(tk.END,str(baudrate))
+        self.entry_serialPort.insert(tk.END,str(serialPort))
+
+        self.root.mainloop()        # GUI main loop
+        # After this point code is halted
+        self.readSerialStop()       # Close serial
+
+    def serialTryOpen(self):
+        self.s.baudrate = int(self.entry_serialBaud.get())
+        self.s.timeout = float(self.entry_serialTimeout.get())
+        self.s.port = self.entry_serialPort.get()
+
+        self.poolEnable = 1
+        if self.s.isOpen():
+            self.readSerialStop()
+            self.s.open()
+        else:
+            self.s.open()
+
         print("[INFO] Creating serial com thread")
-        if self.thread == None:
-
+        if self.thread is None:
             self.thread = threading.Thread(target=self.getCOMDataThread)
             self.thread.start()
             sleep(0.001)
 
+        print("[INFO] COM opened successfully.")
+
+    def readSerialStop(self):
+        print("[INFO] Closing serial com thread")
+        if self.s.isOpen():
+            self.poolEnable = 0
+            self.thread.join()
+            self.s.close()
+            self.thread = None
+            print("[INFO] Success")
+        else:
+            print("[INFO] The port is already closed!")
+
+
     def getCOMDataThread(self):
         print("[INFO] Success")
-        while True:
+        while self.poolEnable:
             # print("[INFO] S1, ",self.s.inWaiting())
             while self.s.inWaiting() > 10:
                 self.currentLine = self.s.readline()
@@ -92,6 +114,11 @@ class serialPolarPlot:
         self.cStepSkipLabel.config(text="Step jump: " + self.cStepSkip + " steps")
         self.cTimeBudgetLabel.config(text="Time budget: " + self.cTimeBudget + " ms")
         self.lpTimeLabel.config(text="Loop time : " + self.lpTime + " ms")
+        if self.s.isOpen():
+            serialState = "Open"
+        else :
+            serialState = "Closed"
+        self.serialStatus.config(text="Status: "+serialState)
 
     def updSpd(self):
         self.cSpeed = self.entry_motorSpeed.get()
@@ -143,10 +170,15 @@ class serialPolarPlot:
         self.plotCanvas = FigureCanvasTkAgg(self.fig, master=self.root)         # Contain matplotlib plot
         self.plotCanvas = self.plotCanvas.get_tk_widget()                       # Convert it to canvas
 
+        # Entries
         self.entry_motorSpeed = tk.Entry(self.root)                             # Create speed entry
         self.entry_timeBudget = tk.Entry(self.root)                             # Create speed entry
         self.entry_stepSkip = tk.Entry(self.root)                               # Create speed entry
+        self.entry_serialBaud = tk.Entry(self.root)
+        self.entry_serialPort = tk.Entry(self.root)
+        self.entry_serialTimeout = tk.Entry(self.root)
 
+        # Buttons
         self.button_motorSpeedApply = tk.Button(                                # Create speed button
             self.root,
             text='Apply new speed',
@@ -157,18 +189,38 @@ class serialPolarPlot:
             self.root,
             text='Apply new time budget',
             command=lambda: self.updTimeBudget(),
-            bg="#1aff1a",
+            bg="#ffff1a",
             font=('Arial', 10))  # Create speed entry apply button
-        self.button_stepSkipApply = tk.Button(  # Create speed button
+        self.button_startSerial = tk.Button(
             self.root,
-            text='Apply new step skip',
-            command=lambda: self.updStepSkip(),
-            bg="#1affff",
-            font=('Arial', 10))  # Create speed entry apply button
+            text='Open serial connection',
+            command=lambda: self.serialTryOpen(),
+            bg="#1aff1a",
+            font=('Arial', 10))
+        self.button_stopSerial = tk.Button(
+            self.root,
+            text='Close serial connection',
+            command=lambda: self.readSerialStop(),
+            bg="#ff1a1a",
+            font=('Arial', 10))
+        self.button_stepSkipApply = tk.Button(  # Create speed button
+                self.root,
+                text='Apply new step skip',
+                command=lambda: self.updStepSkip(),
+                bg="#1affff",
+                font=('Arial', 10))  # Create speed entry apply button
+
+        # Labels
+        self.serialStatus = tk.Label(self.root, text="Status: Not connected",highlightcolor="#ff0000", anchor='nw',font=('Arial', 10))
         self.cSpeedLabel = tk.Label(self.root, text="Current speed: NaN", anchor='nw', font=('Arial', 10))
         self.cTimeBudgetLabel = tk.Label(self.root, text="Current time budget: NaN", anchor='nw', font=('Arial', 10))
         self.cStepSkipLabel = tk.Label(self.root, text="Current motor skip: NaN", anchor='nw', font=('Arial', 10))
         self.lpTimeLabel = tk.Label(self.root, text="Loop time: NaN", anchor='nw', font=('Arial', 10))
+
+        self.serialBaudLabel  = tk.Label(self.root, text="Baud rate:", anchor='nw', font=('Arial', 10))
+        self.serialTimeoutLabel  = tk.Label(self.root, text="Timeout:", anchor='nw', font=('Arial', 10))
+        self.serialPortLabel  = tk.Label(self.root, text="Port:", anchor='nw', font=('Arial', 10))
+
         ## Arrange
         self.mainCanvas.pack(fill='both')
 
@@ -176,17 +228,27 @@ class serialPolarPlot:
         self.mainCanvas.create_window(10, 10, window=self.entry_motorSpeed, width=50, height=25,anchor='nw')   # Place it on canvas
         self.mainCanvas.create_window(10, 35, window=self.entry_timeBudget, width=50, height=25,anchor='nw')  # Place it on canvas
         self.mainCanvas.create_window(10, 60, window=self.entry_stepSkip, width=50, height=25,anchor='nw')  # Place it on canvas
+        self.mainCanvas.create_window(500, 10, window=self.entry_serialPort, width=100, height=25, anchor='nw')
+        self.mainCanvas.create_window(500, 35, window=self.entry_serialBaud, width=100, height=25, anchor='nw')
+        self.mainCanvas.create_window(500, 60, window=self.entry_serialTimeout, width=100, height=25, anchor='nw')
+
 
         # Buttons
         self.mainCanvas.create_window(70, 10, window=self.button_motorSpeedApply,width=150,height=25,anchor='nw')     # Place it on canvas
         self.mainCanvas.create_window(70, 35, window=self.button_timeBudgetApply, width=150, height=25,anchor='nw')  # Place it on canvas
         self.mainCanvas.create_window(70, 60, window=self.button_stepSkipApply, width=150, height=25,anchor='nw')  # Place it on canvas
+        self.mainCanvas.create_window(610,10, window=self.button_startSerial, width=150, height=25,anchor='nw')
+        self.mainCanvas.create_window(610,35, window=self.button_stopSerial, width=150, height=25, anchor='nw')
 
         # Labels
         self.cSpeedLabel.place(x=230, y=10, anchor='nw')
         self.cTimeBudgetLabel.place(x=230, y=35, anchor='nw')
         self.cStepSkipLabel.place(x=230, y=60, anchor='nw')
         self.lpTimeLabel.place(x=230, y=85, anchor='nw')
+        self.serialStatus.place(x=610, y=60, anchor='nw')
+        self.serialPortLabel.place(x=465, y=10, anchor='nw')
+        self.serialBaudLabel.place(x=432, y=35, anchor='nw')
+        self.serialTimeoutLabel.place(x=442,y=60,anchor='nw')
 
         self.plotCanvas.pack(fill='both', expand=1)  # Place it on canvas
         self.canvasInitalized = 1
