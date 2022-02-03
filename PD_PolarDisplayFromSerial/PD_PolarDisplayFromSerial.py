@@ -10,96 +10,122 @@ from time import sleep                      # DELAYS
 
 
 class serialPolarPlot:
-    def __init__(self, serialPort='COM7', baudrate=57600, serialTimeout=0.1, plotPtsCnt=50):
+    def __init__(self, serialPort='COM7', baudrate=57600, serialTimeout=0.1, plotResolution=50):
+        
+        self.serialDataPoolingEnabled = 0
+        self.canvasInitialized = 0
+        
         # Data acquisition related
-        self.canvasInitalized = 0
-        self.data = zeros([plotPtsCnt, 2])
-        self.plotPtsCnt = plotPtsCnt
         self.s = serial.Serial()
         self.s.baudrate = baudrate
         self.s.timeout = serialTimeout
         self.s.port = serialPort
+        
+        self.plotData = zeros([plotResolution, 2])
+        self.plotResolution = plotResolution
         self.thread = None
 
-        self.cSpeed = "NaN"
-        self.cStepSkip = "NaN"
-        self.cTimeBudget = "NaN"
-        self.lpTime = "NaN"
+        self.currentSpeed = "NaN"
+        self.currentStepSkip = "NaN"
+        self.currentTimeBudget = "NaN"
+        self.loopTime = "NaN"
 
-        self.root = tk.Tk()         # Main Tkinter window
+        self.rootWindow = tk.Tk()         # Main Tkinter window
         self.init_window()
 
+        # Place default data in entries
         self.entry_serialTimeout.insert(tk.END,str(serialTimeout))
         self.entry_serialBaud.insert(tk.END,str(baudrate))
         self.entry_serialPort.insert(tk.END,str(serialPort))
 
-        self.root.mainloop()        # GUI main loop
-        # After this point code is halted
-        self.readSerialStop()       # Close serial
+        self.rootWindow.mainloop()        # GUI main loop. Note, its continuous loop.
+        
+        self.serial_stop()       # Close serial when GUI is closed.
 
-    def serialTryOpen(self):
+    def serial_try_open(self):
+        # Get values in GUI entry fields
         self.s.baudrate = int(self.entry_serialBaud.get())
         self.s.timeout = float(self.entry_serialTimeout.get())
         self.s.port = self.entry_serialPort.get()
 
-        self.poolEnable = 1
+        # Variable for COM Thread to execute the while() loop
+        self.serialDataPoolingEnabled = 1
+
+        # Try to open serial port
         if self.s.isOpen():
-            self.readSerialStop()
-            self.s.open()
+            self.serial_stop()                                                  # If it is open, restart it with diff.
+            self.s.open()                                                       # parameters
         else:
             self.s.open()
 
+        # Flush plotted data
+        self.plotData = zeros([self.plotResolution, 2])
         print("[INFO] Creating serial com thread")
+
+        # Create thread
         if self.thread is None:
-            self.thread = threading.Thread(target=self.getCOMDataThread)
+            self.thread = threading.Thread(target=self.serial_monitor_thread)
             self.thread.start()
             sleep(0.001)
 
         print("[INFO] COM opened successfully.")
 
-    def readSerialStop(self):
+    def serial_stop(self):
         print("[INFO] Closing serial com thread")
         if self.s.isOpen():
-            self.poolEnable = 0
-            self.thread.join()
-            self.s.close()
+            self.serialDataPoolingEnabled = 0                   # Disable thread's while() loop, so it can stop
+            self.thread.join()                                  # Close the thread
+            self.s.close()                                      # Close serial port
             self.thread = None
             print("[INFO] Success")
         else:
             print("[INFO] The port is already closed!")
 
-
-    def getCOMDataThread(self):
+    def serial_monitor_thread(self):
         print("[INFO] Success")
-        while self.poolEnable:
-            # print("[INFO] S1, ",self.s.inWaiting())
+        while self.serialDataPoolingEnabled:
+            # While there is some data read it all. May observe severe delays when data flows too fast, as buffer fills.
             while self.s.inWaiting() > 10:
-                self.currentLine = self.s.readline()
-                while not (self.currentLine.startswith(b'$') and self.currentLine.endswith(b'\n')):
-                    # print('[INFO] Bad data: ', self.currentLine)
-                    self.currentLine = self.s.readline()
-                line_full = self.currentLine.replace(b'$', b'')
+                # Read a whole frame
+                currentLine = self.s.readline
+
+                # Try to get a whole frame
+                while not (currentLine.startswith(b'$') and currentLine.endswith(b'\n')):
+                    currentLine = self.s.readline()
+
+                # Parse received line
+                line_full = currentLine.replace(b'$', b'')
                 line_full = line_full.replace(b',', b' ')
                 line_full = line_full.replace(b';', b' ')
                 line_as_list = line_full.split() # should extract mod2 n. numbers
-                # Append new data as last and remove the first one
-                self.data = np.vstack([self.data, [np.radians(float(line_as_list[0]) * 0.9), float(line_as_list[1])+np.random.randint(100, 150)]])
-                self.data = np.delete(self.data, 0, 0)
-                self.cSpeed = (line_as_list[2]).decode('utf-8')         # Read current speed
-                self.cStepSkip = (line_as_list[3]).decode('utf-8')      # Read current step skip
-                self.cTimeBudget = (line_as_list[4]).decode('utf-8')    # Read current time budget
-                if self.canvasInitalized == 1:
-                    self.lpTime = (line_as_list[5]).decode('utf-8')
-                # print('[INFO] Data received: ', self.currentLine, 'converted to: ', line_as_list )
+
+                # Append new plotData as last and remove the first one
+                self.plotData = np.vstack([self.plotData, [np.radians(float(line_as_list[0]) * 0.9), float(line_as_list[1])]])
+                self.plotData = np.delete(self.plotData, 0, 0)
+                self.currentSpeed = (line_as_list[2]).decode('utf-8')         # Read current speed
+                self.currentStepSkip = (line_as_list[3]).decode('utf-8')      # Read current step skip
+                self.currentTimeBudget = (line_as_list[4]).decode('utf-8')    # Read current time budget
+
+                if self.canvasInitialized == 1:
+                    self.loopTime = (line_as_list[5]).decode('utf-8')
+
+                # Print debug data
+                print('[INFO] Data received: ', currentLine, 'converted to: ', line_as_list )
                 print('RX_Q:' + str(self.s.inWaiting())+" Cspd:"+
-                      str(self.cSpeed)+" Cskp: "+
-                      str(self.cStepSkip)+" CTme: "+
-                      str(self.cTimeBudget)+" DSize:("+
-                      str(self.data[:,0].size)+" "+
-                      str(self.data[:,1].size)+") ")
+                      str(self.currentSpeed)+" Cskp: "+
+                      str(self.currentStepSkip)+" CTme: "+
+                      str(self.currentTimeBudget)+" DSize:("+
+                      str(self.plotData[:,0].size)+" "+
+                      str(self.plotData[:,1].size)+") ")
 
     def plot_init(self):
         # Create figure for plotting
+        self.fig = plt.figure(figsize=(5, 5))                           # Matplotlib plot size
+        self.ax = self.fig.add_subplot(111, polar=True)                 # Plot type
+        self.headingLine, = self.ax.plot([], [], '-k', linewidth=0.5)   # Create heading indicator
+        self.radarLine, = self.ax.plot([], [])                          # Create surrounding plot
+
+        # Set plot details
         self.ax.set_facecolor('w')
         self.ax.set_theta_zero_location("N")
         self.ax.set_rlabel_position(359)
@@ -109,152 +135,156 @@ class serialPolarPlot:
         self.ax.set_title("Surroundings", va='bottom')
         self.ax.grid(True)
 
-    def updLabels(self):
-        self.cSpeedLabel.config(text="Current speed: " + self.cSpeed + " RPM")
-        self.cStepSkipLabel.config(text="Step jump: " + self.cStepSkip + " steps")
-        self.cTimeBudgetLabel.config(text="Time budget: " + self.cTimeBudget + " ms")
-        self.lpTimeLabel.config(text="Loop time : " + self.lpTime + " ms")
+    def update_canvasLabels(self):
+        self.canvas_label_currentSpeed.config(text="Current speed: " + self.currentSpeed + " RPM")
+        self.canvas_label_currentStepSkip.config(text="Step jump: " + self.currentStepSkip + " steps")
+        self.canvas_label_currentTimeBudget.config(text="Time budget: " + self.currentTimeBudget + " ms")
+        self.canvas_label_loopTime.config(text="Loop time : " + self.loopTime + " ms")
         if self.s.isOpen():
             serialState = "Open"
         else :
             serialState = "Closed"
-        self.serialStatus.config(text="Status: "+serialState)
+        self.canvas_label_serialStatus.config(text="Status: "+serialState)
 
-    def updSpd(self):
-        self.cSpeed = self.entry_motorSpeed.get()
-        if self.cSpeed >'0':
-            self.s.write(("@" + self.entry_motorSpeed.get()+'\r\n').encode('utf-8'))
-            self.updLabels()
-            self.s.flushInput()
+    def update_speed(self):
+        if self.s.isOpen():
+            self.currentSpeed = self.entry_motorSpeed.get()
+            if self.currentSpeed >'0':
+                self.s.write(("@" + self.entry_motorSpeed.get()+'\r\n').encode('utf-8'))
+                self.update_canvasLabels()
+                self.s.flushInput()
+        else:
+            print("[ERROR] Please open the port first")
 
-    def updStepSkip(self):
-        self.cStepSkip = self.entry_stepSkip.get()
-        if self.cStepSkip != '0':
-            self.s.write(("%" + self.entry_stepSkip.get()+'\r\n').encode('utf-8'))
-            self.updLabels()
-        self.s.flushInput()
-        # Adjust buffer size
-        self.plotPtsCnt = abs(int(400/int(self.cStepSkip)))
-        self.data = zeros([self.plotPtsCnt,2])
+    def update_step_skip(self):
+        if self.s.isOpen():
+            self.currentStepSkip = self.entry_stepSkip.get()
+            if self.currentStepSkip != '0':
+                self.s.write(("%" + self.entry_stepSkip.get()+'\r\n').encode('utf-8'))
+                self.update_canvasLabels()
+                self.s.flushInput()
+            self.plotResolution = abs(int(400/int(self.currentStepSkip)))           # Adjust buffer size
+            self.plotData = zeros([self.plotResolution,2])                          # Flush existing data
+        else:
+            print("[ERROR] Please open the port first")
 
-    def updTimeBudget(self):
-        self.cTimeBudget = self.entry_timeBudget.get()
-        if self.cTimeBudget > '0':
-            self.s.write(("&" + self.entry_timeBudget.get() + '\r\n').encode('utf-8'))
-            self.updLabels()
-            self.s.flushInput()
+    def update_time_budget(self):
+        if self.s.isOpen():
+            self.currentTimeBudget = self.entry_timeBudget.get()
+            if self.currentTimeBudget > '0':
+                self.s.write(("&" + self.entry_timeBudget.get() + '\r\n').encode('utf-8'))
+                self.update_canvasLabels()
+                self.s.flushInput()
+        else:
+            print("[ERROR] Please open the port first")
 
     def init_window(self):
 
         def animate(i):
-            self.updLabels()
-            self.radarLine.set_data(self.data[:, 0], self.data[:, 1])
+            self.update_canvasLabels()
+            self.radarLine.set_data(self.plotData[:, 0], self.plotData[:, 1])
             self.headingLine.set_data(
-                [self.data[self.plotPtsCnt - 1, 0], self.data[self.plotPtsCnt - 1, 0]],
+                [self.plotData[self.plotResolution - 1, 0], self.plotData[self.plotResolution - 1, 0]],
                 [0, 400])
-            # print('[INFO] Anim Exec')
 
         # Plot related
-        self.fig = plt.figure(figsize=(5, 5))                           # Matplotlib plot size
-        self.ax = self.fig.add_subplot(111, polar=True)                 # Plot type
-        self.plot_init()                                                # Set up plot features
-
-        self.headingLine, = self.ax.plot([], [], '-k', linewidth=0.5)   # Create heading indicator
-        self.radarLine, = self.ax.plot([], [])                          # Create surrounding plot
+        self.plot_init()                                                # Set up matplotlib polar plot
 
         # Canvas related
-        self.root.title("Polar plot")                                   # Set title
-        self.root.geometry("1000x800")                                  # Dimensions of main window
-        self.mainCanvas = tk.Canvas(self.root, height=120,width=100)
+        self.rootWindow.title("Polar plot")                                   # Set window title
+        self.rootWindow.geometry("1000x800")                                  # Set dimensions of the main window
+        self.mainCanvas = tk.Canvas(self.rootWindow, height=120,width=100)
 
-        self.plotCanvas = FigureCanvasTkAgg(self.fig, master=self.root)         # Contain matplotlib plot
+        self.plotCanvas = FigureCanvasTkAgg(self.fig, master=self.rootWindow)         # Contain matplotlib plot
         self.plotCanvas = self.plotCanvas.get_tk_widget()                       # Convert it to canvas
 
-        # Entries
-        self.entry_motorSpeed = tk.Entry(self.root)                             # Create speed entry
-        self.entry_timeBudget = tk.Entry(self.root)                             # Create speed entry
-        self.entry_stepSkip = tk.Entry(self.root)                               # Create speed entry
-        self.entry_serialBaud = tk.Entry(self.root)
-        self.entry_serialPort = tk.Entry(self.root)
-        self.entry_serialTimeout = tk.Entry(self.root)
+        # Create Entries
+        self.entry_motorSpeed = tk.Entry(self.rootWindow)                             # Create speed entry
+        self.entry_timeBudget = tk.Entry(self.rootWindow)                             # Create speed entry
+        self.entry_stepSkip = tk.Entry(self.rootWindow)                               # Create speed entry
+        self.entry_serialBaud = tk.Entry(self.rootWindow)
+        self.entry_serialPort = tk.Entry(self.rootWindow)
+        self.entry_serialTimeout = tk.Entry(self.rootWindow)
 
-        # Buttons
+        # Create Buttons
         self.button_motorSpeedApply = tk.Button(                                # Create speed button
-            self.root,
+            self.rootWindow,
             text='Apply new speed',
-            command=lambda: self.updSpd(),
+            command=lambda: self.update_speed(),
             bg="#ff1a1a",
             font=('Arial', 10))  # Create speed entry apply button
         self.button_timeBudgetApply = tk.Button(  # Create speed button
-            self.root,
+            self.rootWindow,
             text='Apply new time budget',
-            command=lambda: self.updTimeBudget(),
+            command=lambda: self.update_time_budget(),
             bg="#ffff1a",
             font=('Arial', 10))  # Create speed entry apply button
         self.button_startSerial = tk.Button(
-            self.root,
+            self.rootWindow,
             text='Open serial connection',
-            command=lambda: self.serialTryOpen(),
+            command=lambda: self.serial_try_open(),
             bg="#1aff1a",
             font=('Arial', 10))
         self.button_stopSerial = tk.Button(
-            self.root,
+            self.rootWindow,
             text='Close serial connection',
-            command=lambda: self.readSerialStop(),
+            command=lambda: self.serial_stop(),
             bg="#ff1a1a",
             font=('Arial', 10))
         self.button_stepSkipApply = tk.Button(  # Create speed button
-                self.root,
+                self.rootWindow,
                 text='Apply new step skip',
-                command=lambda: self.updStepSkip(),
+                command=lambda: self.update_step_skip(),
                 bg="#1affff",
                 font=('Arial', 10))  # Create speed entry apply button
 
-        # Labels
-        self.serialStatus = tk.Label(self.root, text="Status: Not connected",highlightcolor="#ff0000", anchor='nw',font=('Arial', 10))
-        self.cSpeedLabel = tk.Label(self.root, text="Current speed: NaN", anchor='nw', font=('Arial', 10))
-        self.cTimeBudgetLabel = tk.Label(self.root, text="Current time budget: NaN", anchor='nw', font=('Arial', 10))
-        self.cStepSkipLabel = tk.Label(self.root, text="Current motor skip: NaN", anchor='nw', font=('Arial', 10))
-        self.lpTimeLabel = tk.Label(self.root, text="Loop time: NaN", anchor='nw', font=('Arial', 10))
+        # Create Labels
+        self.canvas_label_serialStatus = tk.Label(self.rootWindow, text="Status: Not connected",highlightcolor="#ff0000",
+                                                  anchor='nw',font=('Arial', 10))
+        self.canvas_label_currentSpeed = tk.Label(self.rootWindow, text="Current speed: NaN", anchor='nw', font=('Arial', 10))
+        self.canvas_label_currentTimeBudget = tk.Label(self.rootWindow, text="Current time budget: NaN", anchor='nw',
+                                                       font=('Arial', 10))
+        self.canvas_label_currentStepSkip = tk.Label(self.rootWindow, text="Current motor skip: NaN", anchor='nw', font=('Arial', 10))
+        self.canvas_label_loopTime = tk.Label(self.rootWindow, text="Loop time: NaN", anchor='nw', font=('Arial', 10))
 
-        self.serialBaudLabel  = tk.Label(self.root, text="Baud rate:", anchor='nw', font=('Arial', 10))
-        self.serialTimeoutLabel  = tk.Label(self.root, text="Timeout:", anchor='nw', font=('Arial', 10))
-        self.serialPortLabel  = tk.Label(self.root, text="Port:", anchor='nw', font=('Arial', 10))
+        self.canvas_label_serialBaud  = tk.Label(self.rootWindow, text="Baud rate:", anchor='nw', font=('Arial', 10))
+        self.canvas_label_serialTimeout  = tk.Label(self.rootWindow, text="Timeout:", anchor='nw', font=('Arial', 10))
+        self.canvas_label_serialPort  = tk.Label(self.rootWindow, text="Port:", anchor='nw', font=('Arial', 10))
 
-        ## Arrange
+        # Place main canvas
         self.mainCanvas.pack(fill='both')
 
-        # Entries
-        self.mainCanvas.create_window(10, 10, window=self.entry_motorSpeed, width=50, height=25,anchor='nw')   # Place it on canvas
-        self.mainCanvas.create_window(10, 35, window=self.entry_timeBudget, width=50, height=25,anchor='nw')  # Place it on canvas
-        self.mainCanvas.create_window(10, 60, window=self.entry_stepSkip, width=50, height=25,anchor='nw')  # Place it on canvas
+        # Arrange Entries
+        self.mainCanvas.create_window(10, 10, window=self.entry_motorSpeed, width=50, height=25, anchor='nw')
+        self.mainCanvas.create_window(10, 35, window=self.entry_timeBudget, width=50, height=25, anchor='nw')
+        self.mainCanvas.create_window(10, 60, window=self.entry_stepSkip, width=50, height=25, anchor='nw')
         self.mainCanvas.create_window(500, 10, window=self.entry_serialPort, width=100, height=25, anchor='nw')
         self.mainCanvas.create_window(500, 35, window=self.entry_serialBaud, width=100, height=25, anchor='nw')
         self.mainCanvas.create_window(500, 60, window=self.entry_serialTimeout, width=100, height=25, anchor='nw')
 
-
-        # Buttons
-        self.mainCanvas.create_window(70, 10, window=self.button_motorSpeedApply,width=150,height=25,anchor='nw')     # Place it on canvas
-        self.mainCanvas.create_window(70, 35, window=self.button_timeBudgetApply, width=150, height=25,anchor='nw')  # Place it on canvas
-        self.mainCanvas.create_window(70, 60, window=self.button_stepSkipApply, width=150, height=25,anchor='nw')  # Place it on canvas
-        self.mainCanvas.create_window(610,10, window=self.button_startSerial, width=150, height=25,anchor='nw')
+        # Arrange Buttons
+        self.mainCanvas.create_window(70, 10, window=self.button_motorSpeedApply, width=150, height=25, anchor='nw')
+        self.mainCanvas.create_window(70, 35, window=self.button_timeBudgetApply, width=150, height=25, anchor='nw')
+        self.mainCanvas.create_window(70, 60, window=self.button_stepSkipApply, width=150, height=25, anchor='nw')
+        self.mainCanvas.create_window(610,10, window=self.button_startSerial, width=150, height=25, anchor='nw')
         self.mainCanvas.create_window(610,35, window=self.button_stopSerial, width=150, height=25, anchor='nw')
 
-        # Labels
-        self.cSpeedLabel.place(x=230, y=10, anchor='nw')
-        self.cTimeBudgetLabel.place(x=230, y=35, anchor='nw')
-        self.cStepSkipLabel.place(x=230, y=60, anchor='nw')
-        self.lpTimeLabel.place(x=230, y=85, anchor='nw')
-        self.serialStatus.place(x=610, y=60, anchor='nw')
-        self.serialPortLabel.place(x=465, y=10, anchor='nw')
-        self.serialBaudLabel.place(x=432, y=35, anchor='nw')
-        self.serialTimeoutLabel.place(x=442,y=60,anchor='nw')
+        # Arrange Labels
+        self.canvas_label_currentSpeed.place(x=230, y=10, anchor='nw')
+        self.canvas_label_currentTimeBudget.place(x=230, y=35, anchor='nw')
+        self.canvas_label_currentStepSkip.place(x=230, y=60, anchor='nw')
+        self.canvas_label_loopTime.place(x=230, y=85, anchor='nw')
+        self.canvas_label_serialStatus.place(x=610, y=60, anchor='nw')
+        self.canvas_label_serialPort.place(x=465, y=10, anchor='nw')
+        self.canvas_label_serialBaud.place(x=432, y=35, anchor='nw')
+        self.canvas_label_serialTimeout.place(x=442,y=60,anchor='nw')
 
-        self.plotCanvas.pack(fill='both', expand=1)  # Place it on canvas
-        self.canvasInitalized = 1
+        # Add matplotlib canvas to picutre
+        self.plotCanvas.pack(fill='both', expand=1)
+        self.canvasInitialized = 1
 
+        # Start animation
         self.ani = animation.FuncAnimation(self.fig, animate, interval=20, frames=1)    # Start animation
 
-# Performance parameters
-serPlot = serialPolarPlot(serialPort='COM7', baudrate=57600, serialTimeout=0.1, plotPtsCnt=50)
 
+serPlot = serialPolarPlot(serialPort='COM7', baudrate=57600, serialTimeout=0.1, plotResolution=50)
